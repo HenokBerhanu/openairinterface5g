@@ -36,21 +36,21 @@
 
 const char *duplex_mode[]={"FDD","TDD"};
 
-int tables_5_3_2[5][11] = {
-  {25, 52, 79, 106, 133, 160, 216, 270, -1, -1, -1}, // 15 FR1
-  {11, 24, 38, 51, 65, 78, 106, 133, 162, 217, 273}, // 30 FR1
-  {-1, 11, 18, 24, 31, 38, 51, 65, 79, 107, 135},    // 60 FR1
-  {66, 132, 264, -1 , -1, -1, -1, -1, -1, -1, -1},   // 60 FR2
-  {32, 66, 132, 264, -1, -1, -1, -1, -1, -1, -1}     // 120FR2
+int tables_5_3_2[5][12] = {
+  {25, 52, 79, 106, 133, 160, 216, 270, -1, -1, -1, -1}, // 15 FR1
+  {11, 24, 38, 51, 65, 78, 106, 133, 162, 217, 245, 273},// 30 FR1
+  {-1, 11, 18, 24, 31, 38, 51, 65, 79, 107, 121, 135},   // 60 FR1
+  {66, 132, 264, -1 , -1, -1, -1, -1, -1, -1, -1, -1},   // 60 FR2
+  {32, 66, 132, 264, -1, -1, -1, -1, -1, -1, -1, -1}     // 120FR2
 };
 
-int get_supported_band_index(int scs, int band, int n_rbs){
-
+int get_supported_band_index(int scs, int band, int n_rbs)
+{
   int scs_index = scs;
-  if (band>256)
+  if (band > 256)
     scs_index++;
-  for (int i=0; i<11; i++) {
-    if(n_rbs == tables_5_3_2[scs][i])
+  for (int i = 0; i < 12; i++) {
+    if(n_rbs == tables_5_3_2[scs_index][i])
       return i;
   }
   return (-1); // not found
@@ -130,12 +130,72 @@ const nr_bandentry_t nr_bandtable[] = {
   {261,27500040,28350000,27500040,28350000,  2,2070833, 120}
 };
 
+int get_supported_bw_mhz(frequency_range_t frequency_range, int bw_index)
+{
+  if (frequency_range == FR1) {
+    switch (bw_index) {
+      case 0 :
+        return 5; // 5MHz
+      case 1 :
+        return 10;
+      case 2 :
+        return 15;
+      case 3 :
+        return 20;
+      case 4 :
+        return 25;
+      case 5 :
+        return 30;
+      case 6 :
+        return 40;
+      case 7 :
+        return 50;
+      case 8 :
+        return 60;
+      case 9 :
+        return 80;
+      case 10 :
+        return 90;
+      case 11 :
+        return 100;
+      default :
+        AssertFatal(false, "Invalid band index for FR1 %d\n", bw_index);
+    }
+  }
+  else {
+    switch (bw_index) {
+      case 0 :
+        return 50; // 50MHz
+      case 1 :
+        return 100;
+      case 2 :
+        return 200;
+      case 3 :
+        return 400;
+      default :
+        AssertFatal(false, "Invalid band index for FR2 %d\n", bw_index);
+    }
+  }
+}
+
+bool compare_relative_ul_channel_bw(int nr_band, int scs, int nb_ul, frame_type_t frame_type)
+{
+  // 38.101-1 section 6.2.2
+  // Relative channel bandwidth <= 4% for TDD bands and <= 3% for FDD bands
+  int index = get_nr_table_idx(nr_band, scs);
+  int bw_index = get_supported_band_index(scs, nr_band, nb_ul);
+  int band_size_khz = get_supported_bw_mhz(nr_band > 256 ? FR2 : FR1, bw_index) * 1000;
+  float limit = frame_type == TDD ? 0.04 : 0.03;
+  float rel_bw = (float) (2 * band_size_khz) / (float) (nr_bandtable[index].ul_max + nr_bandtable[index].ul_min);
+  return rel_bw <= limit;
+}
+
 uint16_t get_band(uint64_t downlink_frequency, int32_t delta_duplex)
 {
-  const uint64_t dl_freq_khz = downlink_frequency / 1000;
+  const int64_t dl_freq_khz = downlink_frequency / 1000;
   const int32_t  delta_duplex_khz = delta_duplex / 1000;
 
-  uint64_t center_freq_diff_khz = 999999999999999999; // 2^64
+  uint64_t center_freq_diff_khz = UINT64_MAX; // 2^64
   uint16_t current_band = 0;
 
   for (int ind = 0; ind < sizeofArray(nr_bandtable); ind++) {
@@ -148,11 +208,11 @@ uint16_t get_band(uint64_t downlink_frequency, int32_t delta_duplex)
     if (current_offset_khz != delta_duplex_khz)
       continue;
 
-    uint64_t center_frequency_khz = (nr_bandtable[ind].dl_max + nr_bandtable[ind].dl_min) / 2;
+    int64_t center_frequency_khz = (nr_bandtable[ind].dl_max + nr_bandtable[ind].dl_min) / 2;
 
-    if (abs(dl_freq_khz - center_frequency_khz) < center_freq_diff_khz){
+    if (labs(dl_freq_khz - center_frequency_khz) < center_freq_diff_khz){
       current_band = nr_bandtable[ind].band;
-      center_freq_diff_khz = abs(dl_freq_khz - center_frequency_khz);
+      center_freq_diff_khz = labs(dl_freq_khz - center_frequency_khz);
     }
   }
 
@@ -191,65 +251,17 @@ int PRBalloc_to_locationandbandwidth(int NPRB,int RBstart) {
   return(PRBalloc_to_locationandbandwidth0(NPRB,RBstart,275));
 }
 
-/// Target code rate tables indexed by Imcs
-/* TS 38.214 table 5.1.3.1-1 - MCS index table 1 for PDSCH */
-uint16_t nr_target_code_rate_table1[29] = {120, 157, 193, 251, 308, 379, 449, 526, 602, 679, 340, 378, 434, 490, 553, \
-                                            616, 658, 438, 466, 517, 567, 616, 666, 719, 772, 822, 873, 910, 948};
+int cce_to_reg_interleaving(const int R, int k, int n_shift, const int C, int L, const int N_regs) {
 
-/* TS 38.214 table 5.1.3.1-2 - MCS index table 2 for PDSCH */
-// Imcs values 20 and 26 have been multiplied by 2 to avoid the floating point
-uint16_t nr_target_code_rate_table2[28] = {120, 193, 308, 449, 602, 378, 434, 490, 553, 616, 658, 466, 517, 567, \
-                                            616, 666, 719, 772, 822, 873, 1365, 711, 754, 797, 841, 885, 1833, 948};
-
-/* TS 38.214 table 5.1.3.1-3 - MCS index table 3 for PDSCH */
-uint16_t nr_target_code_rate_table3[29] = {30, 40, 50, 64, 78, 99, 120, 157, 193, 251, 308, 379, 449, 526, 602, 340, \
-                                            378, 434, 490, 553, 616, 438, 466, 517, 567, 616, 666, 719, 772};
-
-uint16_t nr_tbs_table[93] = {24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 208, 224, 240, 256, 272, 288, 304, 320, \
-                              336, 352, 368, 384, 408, 432, 456, 480, 504, 528, 552, 576, 608, 640, 672, 704, 736, 768, 808, 848, 888, 928, 984, 1032, 1064, 1128, 1160, 1192, 1224, 1256, \
-                              1288, 1320, 1352, 1416, 1480, 1544, 1608, 1672, 1736, 1800, 1864, 1928, 2024, 2088, 2152, 2216, 2280, 2408, 2472, 2536, 2600, 2664, 2728, 2792, 2856, 2976, \
-                              3104, 3240, 3368, 3496, 3624, 3752, 3824};
-
-uint8_t nr_get_Qm(uint8_t Imcs, uint8_t table_idx) {
-  switch(table_idx) {
-    case 1:
-      return (((Imcs<10)||(Imcs==29))?2:((Imcs<17)||(Imcs==30))?4:((Imcs<29)||(Imcs==31))?6:-1);
-    break;
-
-    case 2:
-      return (((Imcs<5)||(Imcs==28))?2:((Imcs<11)||(Imcs==29))?4:((Imcs<20)||(Imcs==30))?6:((Imcs<28)||(Imcs==31))?8:-1);
-    break;
-
-    case 3:
-      return (((Imcs<15)||(Imcs==29))?2:((Imcs<21)||(Imcs==30))?4:((Imcs<29)||(Imcs==31))?6:-1);
-    break;
-
-    default:
-      AssertFatal(0, "Invalid MCS table index %d (expected in range [1,3])\n", table_idx);
-      return(0);
-      break;
+  int f;  // interleaving function
+  if(R==0)
+    f = k;
+  else {
+    int c = k/R;
+    int r = k % R;
+    f = (r * C + c + n_shift) % (N_regs / L);
   }
-}
-
-uint32_t nr_get_code_rate(uint8_t Imcs, uint8_t table_idx) {
-  switch(table_idx) {
-    case 1:
-      return (nr_target_code_rate_table1[Imcs]);
-    break;
-
-    case 2:
-      return (nr_target_code_rate_table2[Imcs]);
-    break;
-
-    case 3:
-      return (nr_target_code_rate_table3[Imcs]);
-    break;
-
-    default:
-      AssertFatal(0, "Invalid MCS table index %d (expected in range [1,3])\n", table_idx);
-      return(0);
-      break;
-  }
+  return f;
 }
 
 void get_coreset_rballoc(uint8_t *FreqDomainResource,int *n_rb,int *rb_offset) {
@@ -275,7 +287,8 @@ void get_coreset_rballoc(uint8_t *FreqDomainResource,int *n_rb,int *rb_offset) {
   *n_rb = 6*count;
 }
 
-int get_nb_periods_per_frame(uint8_t tdd_period) {
+int get_nb_periods_per_frame(uint8_t tdd_period)
+{
 
   int nb_periods_per_frame;
   switch(tdd_period) {
@@ -318,7 +331,13 @@ int get_nb_periods_per_frame(uint8_t tdd_period) {
 }
 
 
-int get_dmrs_port(int nl, uint16_t dmrs_ports) {
+int get_first_ul_slot(int nrofDownlinkSlots, int nrofDownlinkSymbols, int nrofUplinkSymbols)
+{
+  return (nrofDownlinkSlots + (nrofDownlinkSymbols != 0 && nrofUplinkSymbols == 0));
+}
+
+int get_dmrs_port(int nl, uint16_t dmrs_ports)
+{
 
   if (dmrs_ports == 0) return 0; // dci 1_0
   int p = -1;
@@ -363,118 +382,6 @@ int32_t get_delta_duplex(int nr_bandP, uint8_t scs_index)
   return delta_duplex;
 }
 
-uint16_t config_bandwidth(int mu, int nb_rb, int nr_band)
-{
-
-  if (nr_band < 100)  { //FR1
-   switch(mu) {
-    case 0 :
-      if (nb_rb<=25)
-        return 5;
-      if (nb_rb<=52)
-        return 10;
-      if (nb_rb<=79)
-        return 15;
-      if (nb_rb<=106)
-        return 20;
-      if (nb_rb<=133)
-        return 25;
-      if (nb_rb<=160)
-        return 30;
-      if (nb_rb<=216)
-        return 40;
-      if (nb_rb<=270)
-        return 50;
-      AssertFatal(1==0,"Number of DL resource blocks %d undefined for mu %d and band %d\n", nb_rb, mu, nr_band);
-      break;
-    case 1 :
-      if (nb_rb<=11)
-        return 5;
-      if (nb_rb<=24)
-        return 10;
-      if (nb_rb<=38)
-        return 15;
-      if (nb_rb<=51)
-        return 20;
-      if (nb_rb<=65)
-        return 25;
-      if (nb_rb<=78)
-        return 30;
-      if (nb_rb<=106)
-        return 40;
-      if (nb_rb<=133)
-        return 50;
-      if (nb_rb<=162)
-        return 60;
-      if (nb_rb<=189)
-        return 70;
-      if (nb_rb<=217)
-        return 80;
-      if (nb_rb<=245)
-        return 90;
-      if (nb_rb<=273)
-        return 100;
-      AssertFatal(1==0,"Number of DL resource blocks %d undefined for mu %d and band %d\n", nb_rb, mu, nr_band);
-      break;
-    case 2 :
-      if (nb_rb<=11)
-        return 10;
-      if (nb_rb<=18)
-        return 15;
-      if (nb_rb<=24)
-        return 20;
-      if (nb_rb<=31)
-        return 25;
-      if (nb_rb<=38)
-        return 30;
-      if (nb_rb<=51)
-        return 40;
-      if (nb_rb<=65)
-        return 50;
-      if (nb_rb<=79)
-        return 60;
-      if (nb_rb<=93)
-        return 70;
-      if (nb_rb<=107)
-        return 80;
-      if (nb_rb<=121)
-        return 90;
-      if (nb_rb<=135)
-        return 100;
-      AssertFatal(1==0,"Number of DL resource blocks %d undefined for mu %d and band %d\n", nb_rb, mu, nr_band);
-      break;
-    default:
-      AssertFatal(1==0,"Numerology %d undefined for band %d in FR1\n", mu,nr_band);
-   }
-  }
-  else {
-   switch(mu) {
-    case 2 :
-      if (nb_rb<=66)
-        return 50;
-      if (nb_rb<=132)
-        return 100;
-      if (nb_rb<=264)
-        return 200;
-      AssertFatal(1==0,"Number of DL resource blocks %d undefined for mu %d and band %d\n", nb_rb, mu, nr_band);
-      break;
-    case 3 :
-      if (nb_rb<=32)
-        return 50;
-      if (nb_rb<=66)
-        return 100;
-      if (nb_rb<=132)
-        return 200;
-      if (nb_rb<=264)
-        return 400;
-      AssertFatal(1==0,"Number of DL resource blocks %d undefined for mu %d and band %d\n", nb_rb, mu, nr_band);
-      break;
-    default:
-      AssertFatal(1==0,"Numerology %d undefined for band %d in FR1\n", mu,nr_band);
-   }
-  }
-}
-
 // Returns the corresponding row index of the NR table
 int get_nr_table_idx(int nr_bandP, uint8_t scs_index) {
   int scs_khz = 15 << scs_index;
@@ -503,7 +410,6 @@ int get_nr_table_idx(int nr_bandP, uint8_t scs_index) {
   return i;
 }
 
-
 int get_subband_size(int NPRB,int size) {
   // implements table  5.2.1.4-2 from 36.214
   //
@@ -519,6 +425,265 @@ int get_subband_size(int NPRB,int size) {
   if (NPRB<275) return (size==0 ? 16 : 32);
   AssertFatal(1==0,"Shouldn't get here, NPRB %d\n",NPRB);
  
+}
+
+void get_samplerate_and_bw(int mu,
+                           int n_rb,
+                           int8_t threequarter_fs,
+                           double *sample_rate,
+                           unsigned int *samples_per_frame,
+                           double *tx_bw,
+                           double *rx_bw) {
+
+  if (mu == 0) {
+    switch(n_rb) {
+    case 270:
+      if (threequarter_fs) {
+        *sample_rate=92.16e6;
+        *samples_per_frame = 921600;
+        *tx_bw = 50e6;
+        *rx_bw = 50e6;
+      } else {
+        *sample_rate=61.44e6;
+        *samples_per_frame = 614400;
+        *tx_bw = 50e6;
+        *rx_bw = 50e6;
+      }
+      break;
+    case 216:
+      if (threequarter_fs) {
+        *sample_rate=46.08e6;
+        *samples_per_frame = 460800;
+        *tx_bw = 40e6;
+        *rx_bw = 40e6;
+      }
+      else {
+        *sample_rate=61.44e6;
+        *samples_per_frame = 614400;
+        *tx_bw = 40e6;
+        *rx_bw = 40e6;
+      }
+      break;
+    case 160: //30 MHz
+    case 133: //25 MHz
+      if (threequarter_fs) {
+        AssertFatal(1==0,"N_RB %d cannot use 3/4 sampling\n",n_rb);
+      }
+      else {
+        *sample_rate=30.72e6;
+        *samples_per_frame = 307200;
+        *tx_bw = 20e6;
+        *rx_bw = 20e6;
+      }
+      break;
+    case 106:
+      if (threequarter_fs) {
+        *sample_rate=23.04e6;
+        *samples_per_frame = 230400;
+        *tx_bw = 20e6;
+        *rx_bw = 20e6;
+      }
+      else {
+        *sample_rate=30.72e6;
+        *samples_per_frame = 307200;
+        *tx_bw = 20e6;
+        *rx_bw = 20e6;
+      }
+      break;
+    case 52:
+      if (threequarter_fs) {
+        *sample_rate=11.52e6;
+        *samples_per_frame = 115200;
+        *tx_bw = 10e6;
+        *rx_bw = 10e6;
+      }
+      else {
+        *sample_rate=15.36e6;
+        *samples_per_frame = 153600;
+        *tx_bw = 10e6;
+        *rx_bw = 10e6;
+      }
+      break;
+    case 25:
+      if (threequarter_fs) {
+        *sample_rate=5.76e6;
+        *samples_per_frame = 57600;
+        *tx_bw = 5e6;
+        *rx_bw = 5e6;
+      }
+      else {
+        *sample_rate=7.68e6;
+        *samples_per_frame = 76800;
+        *tx_bw = 5e6;
+        *rx_bw = 5e6;
+      }
+      break;
+    default:
+      AssertFatal(0==1,"N_RB %d not yet supported for numerology %d\n",n_rb,mu);
+    }
+  } else if (mu == 1) {
+    switch(n_rb) {
+
+    case 273:
+      if (threequarter_fs) {
+        *sample_rate=184.32e6;
+        *samples_per_frame = 1843200;
+        *tx_bw = 100e6;
+        *rx_bw = 100e6;
+      } else {
+        *sample_rate=122.88e6;
+        *samples_per_frame = 1228800;
+        *tx_bw = 100e6;
+        *rx_bw = 100e6;
+      }
+      break;
+    case 217:
+      if (threequarter_fs) {
+        *sample_rate=92.16e6;
+        *samples_per_frame = 921600;
+        *tx_bw = 80e6;
+        *rx_bw = 80e6;
+      } else {
+        *sample_rate=122.88e6;
+        *samples_per_frame = 1228800;
+        *tx_bw = 80e6;
+        *rx_bw = 80e6;
+      }
+      break;
+    case 162 :
+      if (threequarter_fs) {
+        AssertFatal(1==0,"N_RB %d cannot use 3/4 sampling\n",n_rb);
+      }
+      else {
+        *sample_rate=61.44e6;
+        *samples_per_frame = 614400;
+        *tx_bw = 60e6;
+        *rx_bw = 60e6;
+      }
+
+      break;
+
+    case 133 :
+      if (threequarter_fs) {
+	AssertFatal(1==0,"N_RB %d cannot use 3/4 sampling\n",n_rb);
+      }
+      else {
+        *sample_rate=61.44e6;
+        *samples_per_frame = 614400;
+        *tx_bw = 50e6;
+        *rx_bw = 50e6;
+      }
+
+      break;
+    case 106:
+      if (threequarter_fs) {
+        *sample_rate=46.08e6;
+        *samples_per_frame = 460800;
+        *tx_bw = 40e6;
+        *rx_bw = 40e6;
+      }
+      else {
+        *sample_rate=61.44e6;
+        *samples_per_frame = 614400;
+        *tx_bw = 40e6;
+        *rx_bw = 40e6;
+      }
+     break;
+    case 51:
+      if (threequarter_fs) {
+        *sample_rate=23.04e6;
+        *samples_per_frame = 230400;
+        *tx_bw = 20e6;
+        *rx_bw = 20e6;
+      }
+      else {
+        *sample_rate=30.72e6;
+        *samples_per_frame = 307200;
+        *tx_bw = 20e6;
+        *rx_bw = 20e6;
+      }
+      break;
+    case 24:
+      if (threequarter_fs) {
+        *sample_rate=11.52e6;
+        *samples_per_frame = 115200;
+        *tx_bw = 10e6;
+        *rx_bw = 10e6;
+      }
+      else {
+        *sample_rate=15.36e6;
+        *samples_per_frame = 153600;
+        *tx_bw = 10e6;
+        *rx_bw = 10e6;
+      }
+      break;
+    default:
+      AssertFatal(0==1,"N_RB %d not yet supported for numerology %d\n",n_rb,mu);
+    }
+  } else if (mu == 3) {
+    switch(n_rb) {
+      case 132:
+      case 128:
+        if (threequarter_fs) {
+          *sample_rate=184.32e6;
+          *samples_per_frame = 1843200;
+          *tx_bw = 200e6;
+          *rx_bw = 200e6;
+        } else {
+          *sample_rate = 245.76e6;
+          *samples_per_frame = 2457600;
+          *tx_bw = 200e6;
+          *rx_bw = 200e6;
+        }
+        break;
+
+      case 66:
+      case 64:
+        if (threequarter_fs) {
+          *sample_rate=92.16e6;
+          *samples_per_frame = 921600;
+          *tx_bw = 100e6;
+          *rx_bw = 100e6;
+        } else {
+          *sample_rate = 122.88e6;
+          *samples_per_frame = 1228800;
+          *tx_bw = 100e6;
+          *rx_bw = 100e6;
+        }
+        break;
+
+      case 32:
+        if (threequarter_fs) {
+          *sample_rate=92.16e6;
+          *samples_per_frame = 921600;
+          *tx_bw = 50e6;
+          *rx_bw = 50e6;
+        } else {
+          *sample_rate=61.44e6;
+          *samples_per_frame = 614400;
+          *tx_bw = 50e6;
+          *rx_bw = 50e6;
+        }
+        break;
+
+      default:
+        AssertFatal(0==1,"N_RB %d not yet supported for numerology %d\n",n_rb,mu);
+    }
+  } else {
+    AssertFatal(0 == 1,"Numerology %d not supported for the moment\n",mu);
+  }
+}
+
+void get_K1_K2(int N1, int N2, int *K1, int *K2)
+{
+  // num of allowed k1 and k2 according to 5.2.2.2.1-3 and -4 in 38.214
+  if(N2 == N1 || N1 == 2)
+    *K1 = 2;
+  else if (N2 == 1)
+    *K1 = 5;
+  else
+    *K1 = 3;
+  *K2 = N2 > 1 ? 2 : 1;
 }
 
 // from start symbol index and nb or symbols to symbol occupation bitmap in a slot
@@ -542,4 +707,29 @@ void SLIV2SL(int SLIV,int *S,int *L) {
     *L=15-SLIVdiv14;
     *S=13-SLIVmod14;
   }
+}
+
+int get_ssb_subcarrier_offset(uint32_t absoluteFrequencySSB, uint32_t absoluteFrequencyPointA)
+{
+  uint32_t absolute_diff = (absoluteFrequencySSB - absoluteFrequencyPointA);
+  const int scaling_5khz = absoluteFrequencyPointA < 600000 ? 3 : 1;
+  return ((absolute_diff / scaling_5khz) % 24);
+}
+
+uint32_t get_ssb_offset_to_pointA(uint32_t absoluteFrequencySSB,
+                                  uint32_t absoluteFrequencyPointA,
+                                  int ssbSubcarrierSpacing,
+                                  int frequency_range)
+{
+  uint32_t absolute_diff = (absoluteFrequencySSB - absoluteFrequencyPointA);
+  const int scaling_5khz = absoluteFrequencyPointA < 600000 ? 3 : 1;
+  int sco = get_ssb_subcarrier_offset(absoluteFrequencySSB, absoluteFrequencyPointA);
+  const int scs_scaling = frequency_range == FR2 ? 1 << (ssbSubcarrierSpacing - 2) : 1 << ssbSubcarrierSpacing;
+  const int scaled_abs_diff = absolute_diff / scaling_5khz;
+  const int ssb_offset_point_a =
+      (scaled_abs_diff - sco) / 12
+      - 10 * scs_scaling; // absoluteFrequencySSB is the central frequency of SSB which is made by 20RBs in total
+  AssertFatal(ssb_offset_point_a % scs_scaling == 0, "PRB offset %d can create frequency offset\n", ssb_offset_point_a);
+  AssertFatal(sco % scs_scaling == 0, "ssb offset %d can create frequency offset\n", sco);
+  return ssb_offset_point_a;
 }

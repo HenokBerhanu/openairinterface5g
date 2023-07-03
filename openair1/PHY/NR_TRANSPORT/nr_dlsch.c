@@ -38,6 +38,7 @@
 #include "PHY/NR_REFSIG/ptrs_nr.h"
 #include "common/utils/LOG/vcd_signal_dumper.h"
 #include "common/utils/nr/nr_common.h"
+#include "executables/softmodem-common.h"
 
 //#define DEBUG_DLSCH
 //#define DEBUG_DLSCH_MAPPING
@@ -58,8 +59,8 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
 
   PHY_VARS_gNB *gNB = msgTx->gNB;
   NR_gNB_DLSCH_t *dlsch;
-  int32_t** txdataF = gNB->common_vars.txdataF;
-  int16_t amp = AMP;
+  c16_t** txdataF = gNB->common_vars.txdataF;
+  int16_t amp = gNB->TX_AMP;
   int xOverhead = 0;
   NR_DL_FRAME_PARMS *frame_parms = &gNB->frame_parms;
   time_stats_t *dlsch_encoding_stats=&gNB->dlsch_encoding_stats;
@@ -74,7 +75,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
   time_stats_t *dlsch_segmentation_stats=&gNB->dlsch_segmentation_stats;
 
   for (int dlsch_id=0; dlsch_id<msgTx->num_pdsch_slot; dlsch_id++) {
-    dlsch = msgTx->dlsch[dlsch_id][0];
+    dlsch = &msgTx->dlsch[dlsch_id][0];
 
     NR_DL_gNB_HARQ_t *harq = &dlsch->harq_process;
     nfapi_nr_dl_tti_pdsch_pdu_rel15_t *rel15 = &harq->pdsch_pdu.pdsch_pdu_rel15;
@@ -102,7 +103,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
     uint32_t ***pdsch_dmrs = gNB->nr_gold_pdsch_dmrs[slot];
     uint16_t dmrs_symbol_map = rel15->dlDmrsSymbPos;//single DMRS: 010000100 Double DMRS 110001100
     uint8_t dmrs_len = get_num_dmrs(rel15->dlDmrsSymbPos);
-    uint16_t nb_re = ((12*rel15->NrOfSymbols)-nb_re_dmrs*dmrs_len-xOverhead)*rel15->rbSize*rel15->nrOfLayers;
+    uint32_t nb_re = ((12*rel15->NrOfSymbols)-nb_re_dmrs*dmrs_len-xOverhead)*rel15->rbSize*rel15->nrOfLayers;
     uint8_t Qm = rel15->qamModOrder[0];
     uint32_t encoded_length = nb_re*Qm;
     int16_t mod_dmrs[n_dmrs<<1] __attribute__ ((aligned(16)));
@@ -122,7 +123,6 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
                           rel15->dlDmrsSymbPos);
       n_ptrs = (rel15->rbSize + rel15->PTRSFreqDensity - 1)/rel15->PTRSFreqDensity;
     }
-    int16_t mod_ptrs[n_ptrs<<1] __attribute__ ((aligned(16)));
 
     /// CRC, coding, interleaving and rate matching
     AssertFatal(harq->pdu!=NULL,"harq->pdu is null\n");
@@ -152,6 +152,9 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
     }
     printf("\n");
 #endif
+
+    if (IS_SOFTMODEM_DLSIM)
+      memcpy(harq->f, output, encoded_length);
 
     for (int q=0; q<rel15->NrOfCodewords; q++) {
       /// scrambling
@@ -185,7 +188,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
       VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_gNB_PDSCH_MODULATION, 0);
       stop_meas(dlsch_modulation_stats);
 #ifdef DEBUG_DLSCH
-      printf("PDSCH Modulation: Qm %d(%d)\n", Qm, nb_re);
+      printf("PDSCH Modulation: Qm %d(%u)\n", Qm, nb_re);
       for (int i=0; i<nb_re>>3; i++) {
         for (int j=0; j<8; j++) {
           printf("%d %d\t", mod_symbs[0][((i<<3)+j)<<1], mod_symbs[0][(((i<<3)+j)<<1)+1]);
@@ -214,6 +217,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
 #endif
 
     stop_meas(&gNB->dlsch_layer_mapping_stats); 
+
     /// Resource mapping
     
     // Non interleaved VRB to PRB mapping
@@ -227,7 +231,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
       txdataF_precoding[layer] = (int16_t *)malloc16(2*14*frame_parms->ofdm_symbol_size*sizeof(int16_t));
 
 #ifdef DEBUG_DLSCH_MAPPING
-    printf("PDSCH resource mapping started (start SC %d\tstart symbol %d\tN_PRB %d\tnb_re %d,nb_layers %d)\n",
+    printf("PDSCH resource mapping started (start SC %d\tstart symbol %d\tN_PRB %d\tnb_re %u,nb_layers %d)\n",
            start_sc, rel15->StartSymbolIndex, rel15->rbSize, nb_re,rel15->nrOfLayers);
 #endif
 
@@ -235,6 +239,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
     for (int nl=0; nl<rel15->nrOfLayers; nl++) {
 
       int dmrs_port = get_dmrs_port(nl,rel15->dmrsPorts);
+
       // DMRS params for this dmrs port
       get_Wt(Wt, dmrs_port, dmrs_Type);
       get_Wf(Wf, dmrs_port, dmrs_Type);
@@ -249,7 +254,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
 	     1+dmrs_Type,nl, Wt[0], Wt[1], Wf[0], Wf[1], delta, l_prime, l0, dmrs_symbol);
 #endif
 
-      uint16_t m=0, dmrs_idx=0;
+      uint32_t m=0, dmrs_idx=0;
 
       // Loop Over OFDM symbols:
       for (int l=rel15->StartSymbolIndex; l<rel15->StartSymbolIndex+rel15->NrOfSymbols; l++) {
@@ -296,12 +301,14 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
 
         /* calculate if current symbol is PTRS symbols */
         ptrs_idx = 0;
-
+        int16_t *mod_ptrs = NULL;
         if(rel15->pduBitmap & 0x1) {
           ptrs_symbol = is_ptrs_symbol(l,dlPtrsSymPos);
           if(ptrs_symbol) {
             /* PTRS QPSK Modulation for each OFDM symbol in a slot */
             LOG_D(PHY,"Doing ptrs modulation for symbol %d, n_ptrs %d\n",l,n_ptrs);
+            int16_t mod_ptrsBuf[n_ptrs<<1] __attribute__ ((aligned(16)));
+            mod_ptrs =mod_ptrsBuf;
             nr_modulation(pdsch_dmrs[l][rel15->SCID], (n_ptrs<<1), DMRS_MOD_ORDER, mod_ptrs);
           }
         }
@@ -312,7 +319,8 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
           for (int i=0; i<rel15->rbSize*NR_NB_SC_PER_RB; i++) {
             /* check if cuurent RE is PTRS RE*/
             is_ptrs_re = 0;
-            if (ptrs_symbol)
+            /* check for PTRS symbol and set flag for PTRS RE */
+            if(ptrs_symbol){
               is_ptrs_re = is_ptrs_subcarrier(k,
                                               rel15->rnti,
                                               nl,
@@ -322,13 +330,14 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
                                               rel15->PTRSReOffset,
                                               start_sc,
                                               frame_parms->ofdm_symbol_size);
+            }
             /* Map DMRS Symbol */
             if ( (dmrs_symbol_map & (1 << l)) &&
                  (k == ((start_sc+get_dmrs_freq_idx(n, k_prime, delta, dmrs_Type))%(frame_parms->ofdm_symbol_size)))) {
               txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)     ] = (Wt[l_prime]*Wf[k_prime]*amp*mod_dmrs[dmrs_idx<<1]) >> 15;
               txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1 ] = (Wt[l_prime]*Wf[k_prime]*amp*mod_dmrs[(dmrs_idx<<1) + 1]) >> 15;
 #ifdef DEBUG_DLSCH_MAPPING
-              printf("dmrs_idx %d\t l %d \t k %d \t k_prime %d \t n %d \t txdataF: %d %d\n",
+              printf("dmrs_idx %u\t l %d \t k %d \t k_prime %d \t n %d \t txdataF: %d %d\n",
                      dmrs_idx, l, k, k_prime, n, txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)],
                      txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1]);
 #endif
@@ -337,6 +346,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
               k_prime&=1;
               n+=(k_prime)?0:1;
             }
+            /* Map PTRS Symbol */
             else if(is_ptrs_re){
               txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)    ] = (beta_ptrs*amp*mod_ptrs[ptrs_idx<<1]) >> 15;
               txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1] = (beta_ptrs*amp*mod_ptrs[(ptrs_idx<<1) + 1])>> 15;
@@ -352,7 +362,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
               txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)    ] = (amp * tx_layers[nl][m<<1]) >> 15;
               txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1] = (amp * tx_layers[nl][(m<<1) + 1]) >> 15;
 #ifdef DEBUG_DLSCH_MAPPING
-              printf("m %d\t l %d \t k %d \t txdataF: %d %d\n",
+              printf("m %u\t l %d \t k %d \t txdataF: %d %d\n",
                      m, l, k, txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)],
                      txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1]);
 #endif
@@ -394,16 +404,17 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
             }
           }
           else {
-            __m64 *txF=(__m64*)&txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size+start_sc)<<1)];
+            __m128i *txF = (__m128i *)&txdataF_precoding[nl][((l * frame_parms->ofdm_symbol_size + start_sc) << 1)];
 
-            __m64 *txl = (__m64*)&tx_layers[nl][m<<1];
-            __m64 amp64=_mm_set1_pi16(amp);
-            for (int i=0; i<(upper_limit>>1); i++) {
-
-              txF[i] = _mm_mulhrs_pi16(amp64,txl[i]);
+            __m128i *txl = (__m128i *)&tx_layers[nl][m << 1];
+            __m128i amp64 = _mm_set1_epi16(amp);
+            int i;
+            for (i = 0; i < (upper_limit >> 2); i++) {
+              const __m128i txL = _mm_loadu_si128(txl + i);
+              _mm_storeu_si128(txF + i, _mm_mulhrs_epi16(amp64, txL));
 #ifdef DEBUG_DLSCH_MAPPING
               if ((i&1) > 0)
-                  printf("m %d\t l %d \t k %d \t txdataF: %d %d\n",
+                  printf("m %u\t l %d \t k %d \t txdataF: %d %d\n",
                          m, l, start_sc+(i>>1), txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + start_sc+(i>>1))<<1)],
                          txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + start_sc+(i>>1))<<1) + 1]);
 #endif
@@ -411,26 +422,44 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
               /*else {
                 txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) ] = 0;
                 txdataF_precoding[anl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1] = 0;
-              }*/
-            } //RE loop, first part
+                }*/
+            }
+            if (i * 4 != upper_limit) {
+              c16_t *txFc = (c16_t *)&txdataF_precoding[nl][((l * frame_parms->ofdm_symbol_size + start_sc) << 1)];
+              c16_t *txlc = (c16_t *)&tx_layers[nl][m << 1];
+              for (i = (upper_limit >> 2) << 2; i < upper_limit; i++) {
+                txFc[i].r = ((txlc[i].r * amp) >> 14) + 1;
+                txFc[i].i = ((txlc[i].i * amp) >> 14) + 1;
+              }
+            }
             m+=upper_limit;
             if (remaining_re > 0) {
-               txF = (__m64*)&txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size)<<1)];
-               txl = (__m64*)&tx_layers[nl][m<<1];
-               for (int i=0; i<(remaining_re>>1); i++) {
-                 txF[i] = _mm_mulhrs_pi16(amp64,txl[i]);
+              txF = (__m128i *)&txdataF_precoding[nl][((l * frame_parms->ofdm_symbol_size) << 1)];
+              txl = (__m128i *)&tx_layers[nl][m << 1];
+              int i;
+              for (i = 0; i < (remaining_re >> 2); i++) {
+                const __m128i txL = _mm_loadu_si128(txl + i);
+                _mm_storeu_si128(txF + i, _mm_mulhrs_epi16(amp64, txL));
 #ifdef DEBUG_DLSCH_MAPPING
                  if ((i&1) > 0)
-                   printf("m %d\t l %d \t k %d \t txdataF: %d %d\n",
+                   printf("m %u\t l %d \t k %d \t txdataF: %d %d\n",
                           m, l, i>>1, txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + (i>>1))<<1) ],
                           txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + (i>>1))<<1) + 1]);
 #endif
-                 /* handle this, mute RE */
-                 /*else {
-                   txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)    ] = 0;
-                   txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1] = 0;
-                 }*/
-               } //RE loop, second part
+                /* handle this, mute RE */
+                /*else {
+                  txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1)    ] = 0;
+                  txdataF_precoding[nl][((l*frame_parms->ofdm_symbol_size + k)<<1) + 1] = 0;
+                  }*/
+              } // RE loop, second part
+              if (i * 4 != remaining_re) {
+                c16_t *txFc = (c16_t *)&txdataF_precoding[nl][((l * frame_parms->ofdm_symbol_size) << 1)];
+                c16_t *txlc = (c16_t *)&tx_layers[nl][m << 1];
+                for (i = (remaining_re >> 2) << 2; i < remaining_re; i++) {
+                  txFc[i].r = ((txlc[i].r * amp) >> 14) + 1;
+                  txFc[i].i = ((txlc[i].i * amp) >> 14) + 1;
+                }
+              }
             } // 
             m+=remaining_re;
           } // N_RB_DL even
@@ -456,7 +485,7 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
         for (int rb=0; rb<rel15->rbSize; rb++) {
           //get pmi info
           uint8_t pmi;
-          if (rel15->precodingAndBeamforming.prg_size > 0)
+          if (0 /*rel15->precodingAndBeamforming.prg_size > 0*/)
             pmi = rel15->precodingAndBeamforming.prgs_list[(int)rb/rel15->precodingAndBeamforming.prg_size].pm_idx;
           else
             pmi = 0;//no precoding
@@ -534,7 +563,6 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
     }// port loop
 
     stop_meas(&gNB->dlsch_precoding_stats);
-    dlsch->slot_tx[slot]=0;
 
     // TODO: handle precoding
     // this maps the layers onto antenna ports
@@ -558,21 +586,16 @@ void nr_generate_pdsch(processingData_L1tx_t *msgTx,
 }
 
 void dump_pdsch_stats(FILE *fd,PHY_VARS_gNB *gNB) {
-
-  for (int i=0;i<NUMBER_OF_NR_SCH_STATS_MAX;i++)
-    if (gNB->dlsch_stats[i].rnti > 0 && gNB->dlsch_stats[i].frame != gNB->dlsch_stats[i].dump_frame) {
-      gNB->dlsch_stats[i].dump_frame = gNB->dlsch_stats[i].frame;
-      fprintf(fd,"DLSCH RNTI %x: current_Qm %d, current_RI %d, total_bytes TX %d\n",
-	    gNB->dlsch_stats[i].rnti,
-	    gNB->dlsch_stats[i].current_Qm,
-	    gNB->dlsch_stats[i].current_RI,
-	    gNB->dlsch_stats[i].total_bytes_tx);
+  for (int i = 0; i < MAX_MOBILES_PER_GNB; i++) {
+    NR_gNB_PHY_STATS_t *stats = &gNB->phy_stats[i];
+    if (stats->active && stats->frame != stats->dlsch_stats.dump_frame) {
+      stats->dlsch_stats.dump_frame = stats->frame;
+      fprintf(fd,
+              "DLSCH RNTI %x: current_Qm %d, current_RI %d, total_bytes TX %d\n",
+              stats->rnti,
+              stats->dlsch_stats.current_Qm,
+              stats->dlsch_stats.current_RI,
+              stats->dlsch_stats.total_bytes_tx);
     }
-
-}
-
-void clear_pdsch_stats(PHY_VARS_gNB *gNB) {
-
-  for (int i=0;i<gNB->number_of_nr_dlsch_max;i++)
-    memset((void*)&gNB->dlsch_stats[i],0,sizeof(gNB->dlsch_stats[i]));
+  }
 }

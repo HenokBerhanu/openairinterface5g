@@ -31,7 +31,6 @@
 */
 
 #include "PHY/defs_gNB.h"
-#include "PHY/phy_extern.h"
 #include "PHY/CODING/coding_extern.h"
 #include "PHY/CODING/coding_defs.h"
 #include "PHY/CODING/lte_interleaver_inline.h"
@@ -49,13 +48,8 @@
 //#define DEBUG_DLSCH_CODING
 //#define DEBUG_DLSCH_FREE 1
 
-
-void free_gNB_dlsch(NR_gNB_DLSCH_t **dlschptr, 
-                    uint16_t N_RB,
-                    const NR_DL_FRAME_PARMS* frame_parms) {
-
-  NR_gNB_DLSCH_t *dlsch = *dlschptr;
-
+void free_gNB_dlsch(NR_gNB_DLSCH_t *dlsch, uint16_t N_RB, const NR_DL_FRAME_PARMS *frame_parms)
+{
   int max_layers = (frame_parms->nb_antennas_tx<NR_MAX_NB_LAYERS) ? frame_parms->nb_antennas_tx : NR_MAX_NB_LAYERS;
   uint16_t a_segments = MAX_NUM_NR_DLSCH_SEGMENTS_PER_LAYER*max_layers;
 
@@ -69,16 +63,16 @@ void free_gNB_dlsch(NR_gNB_DLSCH_t **dlschptr,
     free16(harq->b, a_segments * 1056);
     harq->b = NULL;
   }
+  if (harq->f) {
+    free16(harq->f, N_RB * NR_SYMBOLS_PER_SLOT * NR_NB_SC_PER_RB * 8 * NR_MAX_NB_LAYERS);
+    harq->f = NULL;
+  }
   for (int r = 0; r < a_segments; r++) {
     free(harq->c[r]);
     harq->c[r] = NULL;
   }
   free(harq->c);
   free(harq->pdu);
-
-  for (int aa = 0; aa < 64; aa++)
-    free(dlsch->calib_dl_ch_estimates[aa]);
-  free(dlsch->calib_dl_ch_estimates);
 
   int nb_codewords = NR_MAX_NB_LAYERS > 4 ? 2 : 1;
   for (int q=0; q<nb_codewords; q++)
@@ -93,18 +87,10 @@ void free_gNB_dlsch(NR_gNB_DLSCH_t **dlschptr,
   }
   free(dlsch->txdataF);
   free(dlsch->ue_spec_bf_weights);
-
-  free(dlsch);
-  *dlschptr = NULL;
 }
 
-NR_gNB_DLSCH_t *new_gNB_dlsch(NR_DL_FRAME_PARMS *frame_parms,
-                              unsigned char Kmimo,
-                              unsigned char Mdlharq,
-                              uint32_t Nsoft,
-                              uint8_t  abstraction_flag,
-                              uint16_t N_RB) {
-
+NR_gNB_DLSCH_t new_gNB_dlsch(NR_DL_FRAME_PARMS *frame_parms, uint16_t N_RB)
+{
   int max_layers = (frame_parms->nb_antennas_tx<NR_MAX_NB_LAYERS) ? frame_parms->nb_antennas_tx : NR_MAX_NB_LAYERS;
   uint16_t a_segments = MAX_NUM_NR_DLSCH_SEGMENTS_PER_LAYER*max_layers;  //number of segments to be allocated
 
@@ -113,50 +99,34 @@ NR_gNB_DLSCH_t *new_gNB_dlsch(NR_DL_FRAME_PARMS *frame_parms,
     a_segments = a_segments/273 +1;
   }
 
+  LOG_D(PHY,"Allocating %d segments (MAX %d, N_PRB %d)\n",a_segments,MAX_NUM_NR_DLSCH_SEGMENTS_PER_LAYER,N_RB);
   uint32_t dlsch_bytes = a_segments*1056;  // allocated bytes per segment
-  NR_gNB_DLSCH_t *dlsch = malloc16(sizeof(NR_gNB_DLSCH_t));
-  AssertFatal(dlsch, "cannot allocate dlsch\n");
-  bzero(dlsch,sizeof(NR_gNB_DLSCH_t));
-  dlsch->Kmimo = Kmimo;
-  dlsch->Mdlharq = Mdlharq;
-  dlsch->Mlimit = 4;
-  dlsch->Nsoft = Nsoft;
+  NR_gNB_DLSCH_t dlsch;
 
   int txdataf_size = frame_parms->N_RB_DL*NR_SYMBOLS_PER_SLOT*NR_NB_SC_PER_RB*8; // max pdsch encoded length for each layer
 
-  dlsch->txdataF = (int32_t **)malloc16(max_layers*sizeof(int32_t *));
+  dlsch.txdataF = (int32_t **)malloc16(max_layers * sizeof(int32_t *));
 
-  dlsch->ue_spec_bf_weights = (int32_t ***)malloc16(max_layers*sizeof(int32_t **));
+  dlsch.ue_spec_bf_weights = (int32_t ***)malloc16(max_layers * sizeof(int32_t **));
   for (int layer=0; layer<max_layers; layer++) {
-    dlsch->ue_spec_bf_weights[layer] = (int32_t **)malloc16(64*sizeof(int32_t *));
+    dlsch.ue_spec_bf_weights[layer] = (int32_t **)malloc16(64 * sizeof(int32_t *));
 
     for (int aa=0; aa<64; aa++) {
-      dlsch->ue_spec_bf_weights[layer][aa] = (int32_t *)malloc16(OFDM_SYMBOL_SIZE_COMPLEX_SAMPLES*sizeof(int32_t));
+      dlsch.ue_spec_bf_weights[layer][aa] = (int32_t *)malloc16(OFDM_SYMBOL_SIZE_COMPLEX_SAMPLES * sizeof(int32_t));
 
       for (int re=0; re<OFDM_SYMBOL_SIZE_COMPLEX_SAMPLES; re++) {
-        dlsch->ue_spec_bf_weights[layer][aa][re] = 0x00007fff;
+        dlsch.ue_spec_bf_weights[layer][aa][re] = 0x00007fff;
       }
     }
-    dlsch->txdataF[layer] = (int32_t *)malloc16((txdataf_size)*sizeof(int32_t));
+    dlsch.txdataF[layer] = (int32_t *)malloc16((txdataf_size) * sizeof(int32_t));
   }
 
   int nb_codewords = NR_MAX_NB_LAYERS > 4 ? 2 : 1;
-  dlsch->mod_symbs = (int32_t **)malloc16(nb_codewords*sizeof(int32_t *));
+  dlsch.mod_symbs = (int32_t **)malloc16(nb_codewords * sizeof(int32_t *));
   for (int q=0; q<nb_codewords; q++)
-    dlsch->mod_symbs[q] = (int32_t *)malloc16(txdataf_size*max_layers*sizeof(int32_t));
+    dlsch.mod_symbs[q] = (int32_t *)malloc16(txdataf_size * max_layers * sizeof(int32_t));
 
-  dlsch->calib_dl_ch_estimates = (int32_t **)malloc16(64*sizeof(int32_t *));
-
-  for (int aa=0; aa<64; aa++) {
-    dlsch->calib_dl_ch_estimates[aa] = (int32_t *)malloc16(OFDM_SYMBOL_SIZE_COMPLEX_SAMPLES*sizeof(int32_t));
-  }
-
-  for (int i=0; i<20; i++) {
-    dlsch->harq_ids[0][i] = 0;
-    dlsch->harq_ids[1][i] = 0;
-  }
-
-  NR_DL_gNB_HARQ_t *harq = &dlsch->harq_process;
+  NR_DL_gNB_HARQ_t *harq = &dlsch.harq_process;
   bzero(harq, sizeof(NR_DL_gNB_HARQ_t));
   harq->b = malloc16(dlsch_bytes);
   AssertFatal(harq->b, "cannot allocate memory for harq->b\n");
@@ -177,18 +147,16 @@ NR_gNB_DLSCH_t *new_gNB_dlsch(NR_DL_FRAME_PARMS *frame_parms,
     bzero(harq->c[r], 8448);
   }
 
+  harq->f = malloc16(N_RB * NR_SYMBOLS_PER_SLOT * NR_NB_SC_PER_RB * 8 * NR_MAX_NB_LAYERS);
+  AssertFatal(harq->f, "cannot allocate harq->f\n");
+  bzero(harq->f, N_RB * NR_SYMBOLS_PER_SLOT * NR_NB_SC_PER_RB * 8 * NR_MAX_NB_LAYERS);
+
   return(dlsch);
 }
 
 void clean_gNB_dlsch(NR_gNB_DLSCH_t *dlsch) {
   AssertFatal(dlsch!=NULL,"dlsch is null\n");
-  unsigned char Mdlharq = dlsch->Mdlharq;
-  dlsch->rnti = 0;
   dlsch->active = 0;
-  for (int i=0; i<10; i++) {
-    dlsch->harq_ids[0][i] = Mdlharq;
-    dlsch->harq_ids[1][i] = Mdlharq;
-  }
 }
 
 void ldpc8blocks( void *p) {
@@ -297,42 +265,35 @@ int nr_dlsch_encoding(PHY_VARS_gNB *gNB,
                       uint8_t slot,
                       NR_DL_gNB_HARQ_t *harq,
                       NR_DL_FRAME_PARMS *frame_parms,
-		      unsigned char * output,
-                      time_stats_t *tinput,time_stats_t *tprep,time_stats_t *tparity,time_stats_t *toutput,
-                      time_stats_t *dlsch_rate_matching_stats,time_stats_t *dlsch_interleaving_stats,
-                      time_stats_t *dlsch_segmentation_stats) {
+                      unsigned char *output,
+                      time_stats_t *tinput,
+                      time_stats_t *tprep,
+                      time_stats_t *tparity,
+                      time_stats_t *toutput,
+                      time_stats_t *dlsch_rate_matching_stats,
+                      time_stats_t *dlsch_interleaving_stats,
+                      time_stats_t *dlsch_segmentation_stats)
+{
   encoder_implemparams_t impp;
   impp.output=output;
   unsigned int crc=1;
   nfapi_nr_dl_tti_pdsch_pdu_rel15_t *rel15 = &harq->pdsch_pdu.pdsch_pdu_rel15;
   impp.Zc = &harq->Z;
-  float Coderate = 0.0;
   VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_gNB_DLSCH_ENCODING, VCD_FUNCTION_IN);
   uint32_t A = rel15->TBSize[0]<<3;
   unsigned char *a=harq->pdu;
-  if ( rel15->rnti != SI_RNTI)
-    trace_NRpdu(DIRECTION_DOWNLINK, a, rel15->TBSize[0], 0, WS_C_RNTI, rel15->rnti, frame, slot,0, 0);
+  if (rel15->rnti != SI_RNTI)
+    trace_NRpdu(DIRECTION_DOWNLINK, a, rel15->TBSize[0], WS_C_RNTI, rel15->rnti, frame, slot,0, 0);
 
-  NR_gNB_SCH_STATS_t *stats=NULL;
-  int first_free=-1;
+  NR_gNB_PHY_STATS_t *phy_stats = NULL;
+  if (rel15->rnti != 0xFFFF)
+    phy_stats = get_phy_stats(gNB, rel15->rnti);
 
-  for (int i=0; i<NUMBER_OF_NR_SCH_STATS_MAX; i++) {
-    if (gNB->dlsch_stats[i].rnti == 0 && first_free == -1) {
-      first_free = i;
-      stats=&gNB->dlsch_stats[i];
-    }
-
-    if (gNB->dlsch_stats[i].rnti == rel15->rnti) {
-      stats=&gNB->dlsch_stats[i];
-      break;
-    }
-  }
-
-  if (stats) {
-    stats->rnti = rel15->rnti;
-    stats->total_bytes_tx += rel15->TBSize[0];
-    stats->current_RI   = rel15->nrOfLayers;
-    stats->current_Qm   = rel15->qamModOrder[0];
+  if (phy_stats) {
+    phy_stats->frame = frame;
+    phy_stats->dlsch_stats.total_bytes_tx += rel15->TBSize[0];
+    phy_stats->dlsch_stats.current_RI = rel15->nrOfLayers;
+    phy_stats->dlsch_stats.current_Qm = rel15->qamModOrder[0];
   }
 
   int max_bytes = MAX_NUM_NR_DLSCH_SEGMENTS_PER_LAYER*rel15->nrOfLayers*1056;
@@ -369,15 +330,7 @@ int nr_dlsch_encoding(PHY_VARS_gNB *gNB,
     memcpy(harq->b, a, (A / 8) + 3); // using 3 bytes to mimic the case of 24 bit crc
   }
 
-  if (rel15->targetCodeRate[0]<1000)
-    Coderate = (float)rel15->targetCodeRate[0] /(float) 1024;
-  else  // to scale for mcs 20 and 26 in table 5.1.3.1-2 which are decimal and input 2* in nr_tbs_tools
-    Coderate = (float)rel15->targetCodeRate[0] /(float) 2048;
-
-  if ((A <=292) || ((A<=3824) && (Coderate <= 0.6667)) || Coderate <= 0.25)
-    impp.BG = 2;
-  else
-    impp.BG = 1;
+  impp.BG = rel15->maintenance_parms_v3.ldpcBaseGraph;
 
   start_meas(dlsch_segmentation_stats);
   impp.Kb = nr_segmentation(harq->b, harq->c, harq->B, &impp.n_segments, &impp.K, impp.Zc, &impp.F, impp.BG);
@@ -420,11 +373,13 @@ int nr_dlsch_encoding(PHY_VARS_gNB *gNB,
     encoder_implemparams_t* perJobImpp=(encoder_implemparams_t*)NotifiedFifoData(req);
     *perJobImpp=impp;
     perJobImpp->macro_num=j;
-    pushTpool(gNB->threadPool,req);
+    pushTpool(&gNB->threadPool, req);
     nbJobs++;
   }
   while(nbJobs) {
-    notifiedFIFO_elt_t *req=pullTpool(&nf, gNB->threadPool);
+    notifiedFIFO_elt_t *req=pullTpool(&nf, &gNB->threadPool);
+    if (req == NULL)
+      break; // Tpool has been stopped
     delNotifiedFIFO_elt(req);
     nbJobs--;
 

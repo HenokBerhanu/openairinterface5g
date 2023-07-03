@@ -28,7 +28,6 @@
 #include "PHY/defs.h"
 #include "PHY/vars.h"
 #include "SCHED/extern.h"
-#include "OCG_vars.h"
 #include "MAC_INTERFACE/vars.h"
 #ifdef IFFT_FPGA
 #include "PHY/LTE_REFSIG/mod_table.h"
@@ -36,7 +35,6 @@
 
 #include "SCHED/defs.h"
 #include "SCHED/vars.h"
-#include "ARCH/CBMIMO1/DEVICE_DRIVER/vars.h"
 
 #include "LAYER2/MAC/defs.h"
 #include "PHY_INTERFACE/defs.h"

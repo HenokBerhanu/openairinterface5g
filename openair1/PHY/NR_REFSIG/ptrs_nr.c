@@ -43,15 +43,14 @@
 // TS 38.211 Table 6.4.1.2.2.1-1: The parameter kRE_ref.
 // The first 4 colomns are DM-RS Configuration type 1 and the last 4 colomns are DM-RS Configuration type 2.
 
-int16_t table_6_4_1_2_2_1_1_pusch_ptrs_kRE_ref [6][8] = {
-  { 0,            2,           6,          8,          0,          1,         6,         7},
-  { 2,            4,           8,         10,          1,          6,         7,         0},
-  { 1,            3,           7,          9,          2,          3,         8,         9},
-  { 3,            5,           9,         11,          3,          8,         9,         2},
-  {-1,           -1,          -1,         -1,          4,          5,        10,        11},
-  {-1,           -1,          -1,         -1,          5,         10,        11,         4},
+static const int16_t table_6_4_1_2_2_1_1_pusch_ptrs_kRE_ref[6][8] = {
+    {0, 2, 6, 8, 0, 1, 6, 7},
+    {2, 4, 8, 10, 1, 6, 7, 0},
+    {1, 3, 7, 9, 2, 3, 8, 9},
+    {3, 5, 9, 11, 3, 8, 9, 2},
+    {-1, -1, -1, -1, 4, 5, 10, 11},
+    {-1, -1, -1, -1, 5, 10, 11, 4},
 };
-
 
 /*******************************************************************
 *
@@ -230,7 +229,6 @@ int8_t get_next_estimate_in_slot(uint16_t  ptrsSymbPos,uint16_t  dmrsSymbPos, ui
  *                dmrsConfigType: DMRS configuration type
  *                nb_rb         : No. of resource blocks
  *                rnti          : RNTI
- *                ptrs_ch_p     : pointer to ptrs channel structure
  *                Ns            :
  *                symbol        : OFDM symbol
  *              ofdm_symbol_size: OFDM Symbol Size
@@ -249,7 +247,6 @@ void nr_ptrs_cpe_estimation(uint8_t K_ptrs,
                             uint8_t dmrsConfigType,
                             uint16_t nb_rb,
                             uint16_t rnti,
-                            int16_t *ptrs_ch_p,
                             unsigned char Ns,
                             unsigned char symbol,
                             uint16_t ofdm_symbol_size,
@@ -269,6 +266,7 @@ void nr_ptrs_cpe_estimation(uint8_t K_ptrs,
   }
   uint16_t              sc_per_symbol    = (nb_rb + K_ptrs - 1)/K_ptrs;
   c16_t      ptrs_p[(1 + sc_per_symbol/4)*4];
+  c16_t      ptrs_ch_p[(1 + sc_per_symbol/4)*4];
   c16_t      dmrs_comp_p[(1 + sc_per_symbol/4)*4];
   double                abs              = 0.0;
   double                real             = 0.0;
@@ -306,13 +304,13 @@ void nr_ptrs_cpe_estimation(uint8_t K_ptrs,
   *ptrs_sc = re_cnt;
 
   /*Multiple compensated data with conj of PTRS */
-  mult_cpx_vector((int16_t*)dmrs_comp_p, (int16_t*)ptrs_p, ptrs_ch_p,(1 + sc_per_symbol/4)*4,15); // 2^15 shifted
+  mult_cpx_vector((int16_t*)dmrs_comp_p, (int16_t*)ptrs_p, (int16_t*)ptrs_ch_p, (1 + sc_per_symbol/4)*4, 15); // 2^15 shifted
 
   /* loop over all ptrs sub carriers in a symbol */
   /* sum the error vector */
   for(int i = 0;i < sc_per_symbol; i++) {
-    real+= ptrs_ch_p[(2*i)];
-    imag+= ptrs_ch_p[(2*i)+1];
+    real += ptrs_ch_p[i].r;
+    imag += ptrs_ch_p[i].i;
   }
 #ifdef DEBUG_PTRS
   alpha = atan(imag/real);
@@ -374,7 +372,7 @@ int8_t nr_ptrs_process_slot(uint16_t dmrsSymbPos,
       }
       /* check for left side first */
       /*  right side a DMRS symbol then we need to left extrapolate */
-      if(is_dmrs_symbol(rightRef,dmrsSymbPos)) {
+      if (rightRef != -1 && is_dmrs_symbol(rightRef, dmrsSymbPos)) {
         /* calculate slope from next valid estimates*/
         tmp =  get_next_estimate_in_slot(ptrsSymbPos,dmrsSymbPos,rightRef+1,symbInSlot);
         /* Special case when DMRS is not followed by PTRS symbol then reuse old slope */
@@ -383,22 +381,19 @@ int8_t nr_ptrs_process_slot(uint16_t dmrsSymbPos,
         }
         ptrs_estimate_from_slope(estPerSymb,slope_p,leftRef, rightRef);
         symb = rightRef -1;
-      }
-      else if(is_ptrs_symbol(rightRef,ptrsSymbPos)) {
+      } else if (rightRef != -1 && is_ptrs_symbol(rightRef, ptrsSymbPos)) {
         /* calculate slope from next valid estimates */
         get_slope_from_estimates(leftRef,rightRef,estPerSymb, slope_p);
         ptrs_estimate_from_slope(estPerSymb,slope_p,leftRef, rightRef);
         symb = rightRef -1;
-      }
-      else if((rightRef ==-1) && (symb <symbInSlot)) {
+      } else if ((rightRef == -1) && (symb < symbInSlot)) {
         // in right extrapolation use the last slope
 #ifdef DEBUG_PTRS
         printf("[PHY][PTRS]: Last Slop Reused :(%4f %4f)\n", slope_p[0],slope_p[1]);
 #endif
         ptrs_estimate_from_slope(estPerSymb,slope_p,symb-1,symbInSlot);
         symb = symbInSlot;
-      }
-      else {
+      } else {
         printf("Wrong PTRS Setup, PTRS compensation will be skipped !");
         return -1;
       }

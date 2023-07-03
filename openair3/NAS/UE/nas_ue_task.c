@@ -32,21 +32,21 @@
 # include "memory.h"
 
 #include "nas_user.h"
+#include "common/ran_context.h"
 // FIXME make command line option for NAS_UE_AUTOSTART
 # define NAS_UE_AUTOSTART 1
 
 // FIXME review these externs
-extern unsigned char NB_eNB_INST;
 extern uint16_t NB_UE_INST;
 
 uint16_t ue_idx_standalone = 0xFFFF;
 
 char *make_port_str_from_ueid(const char *base_port_str, int ueid);
 
-static int nas_ue_process_events(nas_user_container_t *users, struct epoll_event *events, int nb_events)
+static bool nas_ue_process_events(nas_user_container_t *users, struct epoll_event *events, int nb_events)
 {
   int event;
-  int exit_loop = FALSE;
+  bool exit_loop = false;
 
   LOG_I(NAS, "[UE] Received %d events\n", nb_events);
 
@@ -86,7 +86,6 @@ void nas_user_api_id_initialize(nas_user_t *user) {
 void *nas_ue_task(void *args_p)
 {
   int                   nb_events;
-  struct epoll_event   *events;
   MessageDef           *msg_p;
   instance_t            instance;
   unsigned int          Mod_id;
@@ -306,11 +305,11 @@ void *nas_ue_task(void *args_p)
       AssertFatal (result == EXIT_SUCCESS, "Failed to free memory (%d)!\n", result);
       msg_p = NULL;
     }
+    struct epoll_event events[20];
+    nb_events = itti_get_events(TASK_NAS_UE, events, 20);
 
-    nb_events = itti_get_events(TASK_NAS_UE, &events);
-
-    if ((nb_events > 0) && (events != NULL)) {
-      if (nas_ue_process_events(users, events, nb_events) == TRUE) {
+    if (nb_events > 0) {
+      if (nas_ue_process_events(users, events, nb_events) == true) {
         LOG_E(NAS, "[UE] Received exit loop\n");
       }
     }

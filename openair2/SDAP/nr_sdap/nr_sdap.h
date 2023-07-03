@@ -32,20 +32,20 @@
  * Downlink - gNB
  * Uplink   - nrUE
  */
-boolean_t sdap_data_req(protocol_ctxt_t *ctxt_p,
-                        const srb_flag_t srb_flag,
-                        const rb_id_t rb_id,
-                        const mui_t mui,
-                        const confirm_t confirm,
-                        const sdu_size_t sdu_buffer_size,
-                        unsigned char *const sdu_buffer,
-                        const pdcp_transmission_mode_t pt_mode,
-                        const uint32_t *sourceL2Id,
-                        const uint32_t *destinationL2Id,
-                        const uint8_t qfi,
-                        const boolean_t rqi,
-                        const int pdusession_id
-                       );
+bool sdap_data_req(protocol_ctxt_t *ctxt_p,
+                   const ue_id_t ue_id,
+                   const srb_flag_t srb_flag,
+                   const rb_id_t rb_id,
+                   const mui_t mui,
+                   const confirm_t confirm,
+                   const sdu_size_t sdu_buffer_size,
+                   unsigned char *const sdu_buffer,
+                   const pdcp_transmission_mode_t pt_mode,
+                   const uint32_t *sourceL2Id,
+                   const uint32_t *destinationL2Id,
+                   const uint8_t qfi,
+                   const bool rqi,
+                   const int pdusession_id);
 
 /*
  * TS 37.324 4.4 Functions
@@ -55,12 +55,12 @@ boolean_t sdap_data_req(protocol_ctxt_t *ctxt_p,
  */
 void sdap_data_ind(rb_id_t pdcp_entity,
                    int is_gnb,
-                   int has_sdap,
-                   int has_sdapULheader,
+                   bool has_sdap_rx,
                    int pdusession_id,
-                   int rnti,
+                   ue_id_t ue_id,
                    char *buf,
-                   int size
-                  );
+                   int size);
+
+void set_qfi_pduid(uint8_t qfi, uint8_t pduid);
 
 #endif

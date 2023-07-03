@@ -48,8 +48,13 @@ void displayList(notifiedFIFO_t *nf) {
 static inline  notifiedFIFO_elt_t *pullNotifiedFifoRemember( notifiedFIFO_t *nf, struct one_thread *thr) {
   mutexlock(nf->lockF);
 
-  while(!nf->outF)
+  while(!nf->outF && !thr->terminate)
     condwait(nf->notifF, nf->lockF);
+
+  if (thr->terminate) {
+    mutexunlock(nf->lockF);
+    return NULL;
+  }
 
   notifiedFIFO_elt_t *ret=nf->outF;
   nf->outF=nf->outF->next;
@@ -59,7 +64,7 @@ static inline  notifiedFIFO_elt_t *pullNotifiedFifoRemember( notifiedFIFO_t *nf,
 
   // For abort feature
   thr->runningOnKey=ret->key;
-  thr->abortFlag=false;
+  thr->dropJob = false;
   mutexunlock(nf->lockF);
   return ret;
 }
@@ -71,6 +76,10 @@ void *one_thread(void *arg) {
   // Infinite loop to process requests
   do {
     notifiedFIFO_elt_t *elt=pullNotifiedFifoRemember(&tp->incomingFifo, myThread);
+    if (elt == NULL) {
+      AssertFatal(myThread->terminate, "pullNotifiedFifoRemember() returned NULL although thread not aborted\n");
+      break;
+    }
 
     if (tp->measurePerf) elt->startProcessingTime=rdtsc_oai();
 
@@ -82,14 +91,17 @@ void *one_thread(void *arg) {
       // Check if the job is still alive, else it has been aborted
       mutexlock(tp->incomingFifo.lockF);
 
-      if (myThread->abortFlag)
+      if (myThread->dropJob)
         delNotifiedFIFO_elt(elt);
       else
         pushNotifiedFIFO(elt->reponseFifo, elt);
       myThread->runningOnKey=-1;
       mutexunlock(tp->incomingFifo.lockF);
     }
-  } while (true);
+    else
+      delNotifiedFIFO_elt(elt);
+  } while (!myThread->terminate);
+  return NULL;
 }
 
 void initNamedTpool(char *params,tpool_t *pool, bool performanceMeas, char *name) {
@@ -101,7 +113,7 @@ void initNamedTpool(char *params,tpool_t *pool, bool performanceMeas, char *name
 
   if (measr) {
     mkfifo(measr,0666);
-    AssertFatal(-1 != (pool->dummyTraceFd=
+    AssertFatal(-1 != (pool->dummyKeepReadingTraceFd=
                          open(measr, O_RDONLY| O_NONBLOCK)),"");
     AssertFatal(-1 != (pool->traceFd=
                          open(measr, O_WRONLY|O_APPEND|O_NOATIME|O_NONBLOCK)),"");
@@ -113,7 +125,6 @@ void initNamedTpool(char *params,tpool_t *pool, bool performanceMeas, char *name
   char *saveptr, * curptr;
   char *parms_cpy=strdup(params);
   pool->nbThreads=0;
-  pool->restrictRNTI=false;
   curptr=strtok_r(parms_cpy,",",&saveptr);
   struct one_thread * ptr;
   char *tname = (name == NULL ? "Tpool" : name);
@@ -121,9 +132,6 @@ void initNamedTpool(char *params,tpool_t *pool, bool performanceMeas, char *name
     int c=toupper(curptr[0]);
 
     switch (c) {
-      case 'U':
-        pool->restrictRNTI=true;
-        break;
 
       case 'N':
         pool->activated=false;
@@ -137,6 +145,8 @@ void initNamedTpool(char *params,tpool_t *pool, bool performanceMeas, char *name
         pool->allthreads->coreID=atoi(curptr);
         pool->allthreads->id=pool->nbThreads;
         pool->allthreads->pool=pool;
+        pool->allthreads->dropJob = false;
+        pool->allthreads->terminate = false;
         //Configure the thread scheduler policy for Linux
         // set the thread name for debugging
         sprintf(pool->allthreads->name,"%s%d_%d",tname,pool->nbThreads,pool->allthreads->coreID);
@@ -154,10 +164,27 @@ void initNamedTpool(char *params,tpool_t *pool, bool performanceMeas, char *name
   }
 }
 
+void initFloatingCoresTpool(int nbThreads,tpool_t *pool, bool performanceMeas, char *name) {
+  char threads[1024] = "n";
+  if (nbThreads) {
+    strcpy(threads,"-1");
+    for (int i=1; i < nbThreads; i++)
+      strncat(threads,",-1", sizeof(threads)-1);
+  }
+  threads[sizeof(threads)-1]=0;
+  initNamedTpool(threads, pool, performanceMeas, name);
+}
+
 #ifdef TEST_THREAD_POOL
 volatile int oai_exit=0;
 
-void exit_function(const char *file, const char *function, const int line, const char *s) {
+void exit_function(const char *file, const char *function, const int line, const char *s, const int assert)
+{
+  if (assert) {
+    abort();
+  } else {
+    exit(EXIT_SUCCESS);
+  }
 }
 
 struct testData {
@@ -191,13 +218,7 @@ int main() {
   tmp=pullNotifiedFIFO(&myFifo);
   printf("pulled: %lu\n", tmp->key);
   displayList(&myFifo);
-  abortNotifiedFIFO(&myFifo,1005);
-  printf("aborted 1005\n");
-  displayList(&myFifo);
   pushNotifiedFIFO(&myFifo,newNotifiedFIFO_elt(sizeof(struct testData), 12345678, NULL, NULL));
-  displayList(&myFifo);
-  abortNotifiedFIFO(&myFifo,12345678);
-  printf("aborted 12345678\n");
   displayList(&myFifo);
 
   do {
@@ -265,7 +286,7 @@ int main() {
     } else
       printf("Empty list \n");
 
-    abortTpool(&pool,510);
+    abortTpoolJob(&pool,510);
   } while(tmp);
 	*/
   return 0;

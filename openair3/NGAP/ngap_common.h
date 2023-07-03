@@ -33,23 +33,12 @@
  */
 
  
-#if HAVE_CONFIG_H_
-# include "config.h"
-#endif
-
 #ifndef NGAP_COMMON_H_
 #define NGAP_COMMON_H_
 
 
 #include "common/utils/LOG/log.h"
-/* replace ASN_DEBUG defined in asn_internal.h by oai tracing system
-   Would be cleaner to modify asn_internal.h but it seems to come
-   from non oai source, with BSD license, so prefer to do that here..
-*/
-#ifdef ASN_DEBUG
-# undef ASN_DEBUG
-#endif
-#define ASN_DEBUG( x... )  LOG_I(ASN, x)
+#include "oai_asn1.h"
 
 #include "NGAP_ProtocolIE-Field.h"
 #include "NGAP_NGAP-PDU.h"
@@ -102,13 +91,6 @@
 # error "You are compiling ngap with the wrong version of ASN1C"
 #endif
 
-#ifndef FALSE
-# define FALSE (0)
-#endif
-#ifndef TRUE
-# define TRUE  (!FALSE)
-#endif
-
 #define NGAP_UE_ID_FMT  "0x%06"PRIX32
 
 extern int asn_debug;
@@ -131,27 +113,27 @@ extern int asn1_xer_print;
 # define NGAP_DEBUG(x, args...) do { fprintf(stdout, "[NGAP][D]"x, ##args); } while(0)
 #endif
 
+#define NGAP_FIND_PROTOCOLIE_BY_ID(IE_TYPE, ie, container, IE_ID, mandatory)                                                            \
+  do {                                                                                                                                  \
+    IE_TYPE **ptr;                                                                                                                      \
+    ie = NULL;                                                                                                                          \
+    for (ptr = container->protocolIEs.list.array; ptr < &container->protocolIEs.list.array[container->protocolIEs.list.count]; ptr++) { \
+      if ((*ptr)->id == IE_ID) {                                                                                                        \
+        ie = *ptr;                                                                                                                      \
+        break;                                                                                                                          \
+      }                                                                                                                                 \
+    }                                                                                                                                   \
+    if (ie == NULL) {                                                                                                                   \
+      if (mandatory) {                                                                                                                  \
+        AssertFatal(NGAP, "NGAP_FIND_PROTOCOLIE_BY_ID ie is NULL (searching for ie: %ld)\n", IE_ID);                                    \
+      } else {                                                                                                                          \
+        NGAP_INFO("NGAP_FIND_PROTOCOLIE_BY_ID ie is NULL (searching for ie: %ld)\n", IE_ID);                                            \
+      }                                                                                                                                 \
+    }                                                                                                                                   \
+  } while (0);                                                                                                                          \
+  if (mandatory && !ie)                                                                                                                 \
+  return -1
 
-#define NGAP_FIND_PROTOCOLIE_BY_ID(IE_TYPE, ie, container, IE_ID, mandatory) \
-  do {\
-    IE_TYPE **ptr; \
-    ie = NULL; \
-    for (ptr = container->protocolIEs.list.array; \
-         ptr < &container->protocolIEs.list.array[container->protocolIEs.list.count]; \
-         ptr++) { \
-      if((*ptr)->id == IE_ID) { \
-        ie = *ptr; \
-        break; \
-      } \
-    } \
-    if (ie == NULL ) { \
-      if (mandatory) {\
-      NGAP_ERROR("NGAP_FIND_PROTOCOLIE_BY_ID: %s %d: ie is NULL (searching for ie: %ld)\n",__FILE__,__LINE__, IE_ID);\
-      abort();\
-      }\
-      else NGAP_INFO("NGAP_FIND_PROTOCOLIE_BY_ID: %s %d: ie is NULL (searching for ie: %ld)\n",__FILE__,__LINE__, IE_ID);\
-    } \
-  } while(0)
 /** \brief Function callback prototype.
  **/
 typedef int (*ngap_message_decoded_callback)(

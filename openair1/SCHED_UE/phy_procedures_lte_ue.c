@@ -37,7 +37,7 @@
 #include "PHY/defs_UE.h"
 #include "PHY/phy_extern_ue.h"
 //#include "executables/nr-uesoftmodem.h"
-#include "targets/RT/USER/lte-softmodem.h"
+#include "executables/lte-softmodem.h"
 
 #include "PHY/LTE_UE_TRANSPORT/transport_proto_ue.h"
 #include "SCHED_UE/sched_UE.h"
@@ -49,6 +49,7 @@
 #endif
 
 #include "LAYER2/MAC/mac.h"
+#include "rrc_proto.h"
 #include "common/utils/LOG/log.h"
 
 #include "common/utils/LOG/vcd_signal_dumper.h"
@@ -67,7 +68,7 @@
 
 #define NS_PER_SLOT 500000
 
-char mode_string[4][20] = {"NOT SYNCHED","PRACH","RAR","PUSCH"};
+static const char mode_string[4][20] = {"NOT SYNCHED","PRACH","RAR","PUSCH"};
 
 extern double cpuf;
 
@@ -460,7 +461,7 @@ void ue_compute_srs_occasion(PHY_VARS_UE *ue,
       is_pucch2_subframe = (is_ri_TXOp(ue,proc,eNB_id) && (ue->cqi_report_config[eNB_id].CQI_ReportPeriodic.ri_ConfigIndex>0)) || is_pucch2_subframe;
 
       // check ACK/SR transmission
-      if(frame_parms->soundingrs_ul_config_common.ackNackSRS_SimultaneousTransmission == FALSE) {
+      if(frame_parms->soundingrs_ul_config_common.ackNackSRS_SimultaneousTransmission == false) {
         if(is_SR_TXOp(ue,proc,eNB_id)) {
           uint32_t SR_payload = 0;
 
@@ -1209,19 +1210,6 @@ void ulsch_common_procedures(PHY_VARS_UE *ue,
       ((short *)ue->common_vars.txdata[aa])[2*k] = ((short *)dummy_tx_buffer)[2*l];
       ((short *)ue->common_vars.txdata[aa])[2*k+1] = ((short *)dummy_tx_buffer)[2*l+1];
     }
-
-#if defined(EXMIMO)
-
-    // handle switch before 1st TX subframe, guarantee that the slot prior to transmission is switch on
-    for (k=ulsch_start - (frame_parms->samples_per_tti>>1) ; k<ulsch_start ; k++) {
-      if (k<0)
-        ue->common_vars.txdata[aa][k+frame_parms->samples_per_tti*LTE_NUMBER_OF_SUBFRAMES_PER_FRAME] &= 0xFFFEFFFE;
-      else if (k>(frame_parms->samples_per_tti*LTE_NUMBER_OF_SUBFRAMES_PER_FRAME))
-        ue->common_vars.txdata[aa][k-frame_parms->samples_per_tti*LTE_NUMBER_OF_SUBFRAMES_PER_FRAME] &= 0xFFFEFFFE;
-      else
-        ue->common_vars.txdata[aa][k] &= 0xFFFEFFFE;
-    }
-#endif
 
     /*
     only for debug
@@ -2236,27 +2224,6 @@ void phy_procedures_UE_TX(PHY_VARS_UE *ue,
   }
 }
 
-void phy_procedures_UE_S_TX(PHY_VARS_UE *ue,
-                            uint8_t eNB_id,
-                            uint8_t abstraction_flag) {
-  int aa;//i,aa;
-  LTE_DL_FRAME_PARMS *frame_parms=&ue->frame_parms;
-
-  for (aa=0; aa<frame_parms->nb_antennas_tx; aa++) {
-#if defined(EXMIMO) //this is the EXPRESS MIMO case
-    int i;
-
-    // set the whole tx buffer to RX
-    for (i=0; i<LTE_NUMBER_OF_SUBFRAMES_PER_FRAME*frame_parms->samples_per_tti; i++)
-      ue->common_vars.txdata[aa][i] = 0x00010001;
-
-#else //this is the normal case
-    //    memset(&ue->common_vars.txdata[aa][0],0,
-    //     (LTE_NUMBER_OF_SUBFRAMES_PER_FRAME*frame_parms->samples_per_tti)*sizeof(int32_t));
-#endif //else EXMIMO
-  }
-}
-
 void ue_measurement_procedures(uint16_t l,    // symbol index of each slot [0..6]
                                PHY_VARS_UE *ue,
                                UE_rxtx_proc_t *proc,
@@ -3028,6 +2995,8 @@ void ue_pmch_procedures(PHY_VARS_UE *ue,
 
 void copy_harq_proc_struct(LTE_DL_UE_HARQ_t *harq_processes_dest,
                            LTE_DL_UE_HARQ_t *current_harq_processes) {
+  init_abort(&harq_processes_dest->abort_decode);
+  set_abort(&harq_processes_dest->abort_decode, check_abort(&current_harq_processes->abort_decode));
   harq_processes_dest->B              = current_harq_processes->B              ;
   harq_processes_dest->C              = current_harq_processes->C              ;
   harq_processes_dest->Cminus         = current_harq_processes->Cminus         ;

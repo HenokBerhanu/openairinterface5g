@@ -216,7 +216,7 @@ sctp_eNB_accept_associations_multi(
 }
 
 //------------------------------------------------------------------------------
-void
+static void
 sctp_handle_new_association_req_multi(
     const instance_t instance,
     const task_id_t requestor,
@@ -355,7 +355,7 @@ sctp_handle_new_association_req_multi(
 }
 
 //------------------------------------------------------------------------------
-void
+static void
 sctp_handle_new_association_req(
     const instance_t instance,
     const task_id_t requestor,
@@ -617,10 +617,7 @@ sctp_handle_new_association_req(
 }
 
 //------------------------------------------------------------------------------
-void sctp_send_data(
-    instance_t       instance,
-    task_id_t        task_id,
-    sctp_data_req_t *sctp_data_req_p)
+static void sctp_send_data(sctp_data_req_t *sctp_data_req_p)
 {
     struct sctp_cnx_list_elm_s *sctp_cnx = NULL;
 
@@ -653,17 +650,14 @@ void sctp_send_data(
         /* TODO: notify upper layer */
         return;
     }
-
-    SCTP_DEBUG("Successfully sent %u bytes on stream %d for assoc_id %u\n",
+    free(sctp_data_req_p->buffer); // assuming it has been malloced
+    SCTP_DEBUG("Successfully sent %u bytes on stream %d for assoc_id %d\n",
                sctp_data_req_p->buffer_length, sctp_data_req_p->stream,
                sctp_cnx->assoc_id);
 }
 
 //------------------------------------------------------------------------------
-static int sctp_close_association(
-    const instance_t instance,
-    const task_id_t  requestor,
-    sctp_close_association_t     *close_association_p)
+static int sctp_close_association(sctp_close_association_t *close_association_p)
 {
 
     struct sctp_cnx_list_elm_s *sctp_cnx = NULL;
@@ -679,7 +673,7 @@ static int sctp_close_association(
     } else {
         close(sctp_cnx->sd);
         STAILQ_REMOVE(&sctp_cnx_list, sctp_cnx, sctp_cnx_list_elm_s, entries);
-        SCTP_DEBUG("Removed assoc_id %u (closed socket %u)\n",
+        SCTP_DEBUG("Removed assoc_id %d (closed socket %u)\n",
                    sctp_cnx->assoc_id, (unsigned int)sctp_cnx->sd);
     }
 
@@ -859,7 +853,7 @@ sctp_eNB_accept_associations(
     struct sctp_cnx_list_elm_s *sctp_cnx)
 {
     int             client_sd;
-    struct sockaddr saddr;
+    struct sockaddr_in6 saddr;
     socklen_t       saddr_size;
 
     DevAssert(sctp_cnx != NULL);
@@ -868,14 +862,14 @@ sctp_eNB_accept_associations(
 
     /* There is a new client connecting. Accept it...
      */
-    if ((client_sd = accept(sctp_cnx->sd, &saddr, &saddr_size)) < 0) {
+    if ((client_sd = accept(sctp_cnx->sd, (struct sockaddr*)&saddr, &saddr_size)) < 0) {
         SCTP_ERROR("[%d] accept failed: %s:%d\n", sctp_cnx->sd, strerror(errno), errno);
     } else {
         struct sctp_cnx_list_elm_s *new_cnx;
         uint16_t port;
 
         /* This is an ipv6 socket */
-        port = ((struct sockaddr_in6*)&saddr)->sin6_port;
+        port = saddr.sin6_port;
 
         /* Contrary to BSD, client socket does not inherit O_NONBLOCK option */
         if (fcntl(client_sd, F_SETFL, O_NONBLOCK) < 0) {
@@ -1058,15 +1052,11 @@ sctp_eNB_read_from_socket(
 
 //------------------------------------------------------------------------------
 void
-sctp_eNB_flush_sockets(
+static sctp_eNB_flush_sockets(
     struct epoll_event *events, int nb_events)
 {
     int i;
     struct sctp_cnx_list_elm_s *sctp_cnx = NULL;
-
-    if (events == NULL) {
-        return;
-    }
 
     for (i = 0; i < nb_events; i++) {
         sctp_cnx = sctp_get_cnx(-1, events[i].data.fd);
@@ -1090,7 +1080,7 @@ sctp_eNB_flush_sockets(
 }
 
 //------------------------------------------------------------------------------
-void sctp_eNB_init(void)
+static void sctp_eNB_init(void)
 {
     SCTP_DEBUG("Starting SCTP layer\n");
 
@@ -1100,10 +1090,9 @@ void sctp_eNB_init(void)
 }
 
 //------------------------------------------------------------------------------
-void *sctp_eNB_process_itti_msg(void *notUsed)
+static void sctp_eNB_process_itti_msg()
 {
     int                 nb_events;
-    struct epoll_event *events;
     MessageDef         *received_msg = NULL;
     int                 result;
 
@@ -1157,10 +1146,8 @@ void *sctp_eNB_process_itti_msg(void *notUsed)
         break;
 
         case SCTP_CLOSE_ASSOCIATION:
-            sctp_close_association(ITTI_MSG_DESTINATION_INSTANCE(received_msg),
-                                   ITTI_MSG_ORIGIN_ID(received_msg),
-                                   &received_msg->ittiMsg.sctp_close_association);
-            break;
+          sctp_close_association(&received_msg->ittiMsg.sctp_close_association);
+          break;
 
         case TERMINATE_MESSAGE:
             SCTP_WARN("*** Exiting SCTP thread\n");
@@ -1168,9 +1155,7 @@ void *sctp_eNB_process_itti_msg(void *notUsed)
             break;
 
         case SCTP_DATA_REQ: {
-            sctp_send_data(ITTI_MSG_DESTINATION_INSTANCE(received_msg),
-                           ITTI_MSG_ORIGIN_ID(received_msg),
-                           &received_msg->ittiMsg.sctp_data_req);
+          sctp_send_data(&received_msg->ittiMsg.sctp_data_req);
         }
         break;
 
@@ -1184,12 +1169,12 @@ void *sctp_eNB_process_itti_msg(void *notUsed)
         AssertFatal (result == EXIT_SUCCESS, "Failed to free memory (%d)!\n", result);
         received_msg = NULL;
     }
-
-    nb_events = itti_get_events(TASK_SCTP, &events);
+    struct epoll_event events[20];
+    nb_events = itti_get_events(TASK_SCTP, events, 20);
     /* Now handle notifications for other sockets */
     sctp_eNB_flush_sockets(events, nb_events);
 
-    return NULL;
+    return;
 }
 
 //------------------------------------------------------------------------------
@@ -1198,7 +1183,7 @@ void *sctp_eNB_task(void *arg)
     sctp_eNB_init();
 
     while (1) {
-        (void) sctp_eNB_process_itti_msg(NULL);
+        sctp_eNB_process_itti_msg();
     }
 
     return NULL;

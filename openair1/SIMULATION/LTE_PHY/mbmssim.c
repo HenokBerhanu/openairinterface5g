@@ -43,10 +43,8 @@
 #include "PHY/phy_vars.h"
 
 #include "SCHED/sched_eNB.h"
-#include "SCHED/sched_common_vars.h"
 #include "LAYER2/MAC/mac_vars.h"
 
-#include "OCG_vars.h"
 #include "common/utils/LOG/log.h"
 #include "UTIL/LISTS/list.h"
 
@@ -679,7 +677,7 @@ int main(int argc, char **argv) {
   nfapi_tx_request_t TX_req;
   Sched_Rsp_t sched_resp;
   int pa=dB0;
-#if defined(__arm__)
+#if defined(__arm__) || defined(__aarch64__)
   FILE    *proc_fd = NULL;
   char buf[64];
   memset(buf,0,sizeof(buf));
@@ -1110,14 +1108,6 @@ int main(int argc, char **argv) {
   eNB->frame_parms.Nid_cell_mbsfn=0;
 #endif
 
-
-  if(get_thread_worker_conf() == WORKER_ENABLE) {
-    extern void init_td_thread(PHY_VARS_eNB *);
-    extern void init_te_thread(PHY_VARS_eNB *);
-    init_td_thread(eNB);
-    init_te_thread(eNB);
-  }
-
   // callback functions required for phy_procedures_tx
   //  eNB_id_i = UE->n_connected_eNB;
   printf("Setting mcs1 = %d\n",mcs1);
@@ -1338,19 +1328,15 @@ int main(int argc, char **argv) {
       break;
   }
 
-  for (k=0; k<NUMBER_OF_UE_MAX; k++) {
-    // Create transport channel structures for 2 transport blocks (MIMO)
-    for (i=0; i<2; i++) {
-      eNB->dlsch[k][i] = new_eNB_dlsch(Kmimo,8,Nsoft,N_RB_DL,0,&eNB->frame_parms);
+    // Create transport channel structures for 1 transport block
+  eNB->dlsch[0][0] = new_eNB_dlsch(Kmimo,8,Nsoft,N_RB_DL,0,&eNB->frame_parms);
 
-      if (!eNB->dlsch[k][i]) {
-        printf("Can't get eNB dlsch structures\n");
-        exit(-1);
-      }
-
-      eNB->dlsch[k][i]->rnti = n_rnti+k;
-    }
+  if (!eNB->dlsch[0][0]) {
+      printf("Can't get eNB dlsch structures\n");
+      exit(-1);
   }
+
+  eNB->dlsch[0][0]->rnti = n_rnti+k;
 
 #ifdef ENABLE_MBMS_SIM
   eNB->dlsch_MCH = new_eNB_dlsch(1,8,Nsoft,N_RB_DL, 0, &eNB->frame_parms);

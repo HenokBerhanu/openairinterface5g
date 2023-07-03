@@ -36,15 +36,10 @@
 #include <math.h>
 #include "nfapi/oai_integration/vendor_ext.h"
 #include <openair1/PHY/LTE_ESTIMATION/lte_estimation.h>
-extern uint32_t from_earfcn(int eutra_bandP,uint32_t dl_earfcn);
-extern int32_t get_uldl_offset(int eutra_bandP);
 
-extern uint16_t prach_root_sequence_map0_3[838];
-extern uint16_t prach_root_sequence_map4[138];
-uint8_t         dmrs1_tab[8] = { 0, 2, 3, 4, 6, 8, 9, 10 };
+const uint8_t dmrs1_tab[8] = {0, 2, 3, 4, 6, 8, 9, 10};
 
-
-int             N_RB_DL_array[6] = { 6, 15, 25, 50, 75, 100 };
+const int N_RB_DL_array[6] = {6, 15, 25, 50, 75, 100};
 
 #include "common/ran_context.h"
 extern RAN_CONTEXT_t RC;
@@ -475,9 +470,7 @@ int phy_init_lte_eNB(PHY_VARS_eNB *eNB,
       srs_vars[srs_id].srs = (int32_t *) malloc16_clear (2 * fp->ofdm_symbol_size * sizeof (int32_t));
     }
 
-    LOG_I(PHY,"PRACH allocation\n");
     // PRACH
-    prach_vars->prachF = (int16_t *) malloc16_clear (1024 * 2 * sizeof (int16_t));
     // assume maximum of 64 RX antennas for PRACH receiver
     prach_vars->prach_ifft[0] = (int32_t **) malloc16_clear (64 * sizeof (int32_t *));
 
@@ -485,8 +478,6 @@ int phy_init_lte_eNB(PHY_VARS_eNB *eNB,
       prach_vars->prach_ifft[0][i] = (int32_t *) malloc16_clear (1024 * 2 * sizeof (int32_t));
 
     prach_vars->rxsigF[0] = (int16_t **) malloc16_clear (64 * sizeof (int16_t *));
-    // PRACH BR
-    prach_vars_br->prachF = (int16_t *)malloc16_clear( 1024*2*sizeof(int32_t) );
 
     // assume maximum of 64 RX antennas for PRACH receiver
     for (int ce_level = 0; ce_level < 4; ce_level++) {
@@ -539,6 +530,8 @@ int phy_init_lte_eNB(PHY_VARS_eNB *eNB,
   }
 
   eNB->pdsch_config_dedicated->p_a = dB0;       //defaul value until overwritten by RRCConnectionReconfiguration
+
+  init_modulation_LUTs();
   return (0);
 }
 
@@ -576,8 +569,6 @@ void phy_free_lte_eNB(PHY_VARS_eNB *eNB) {
 
   for (UE_id=0; UE_id<NUMBER_OF_SRS_MAX; UE_id++) free_and_zero(srs_vars[UE_id].srs);
 
-  free_and_zero(prach_vars->prachF);
-
   for (i = 0; i < 64; i++) free_and_zero(prach_vars->prach_ifft[0][i]);
 
   free_and_zero(prach_vars->prach_ifft[0]);
@@ -589,7 +580,6 @@ void phy_free_lte_eNB(PHY_VARS_eNB *eNB) {
     free_and_zero(prach_vars->rxsigF[ce_level]);
   }
 
-  free_and_zero(prach_vars_br->prachF);
   free_and_zero(prach_vars->rxsigF[0]);
 
   for (int ULSCH_id=0; ULSCH_id<NUMBER_OF_ULSCH_MAX; ULSCH_id++) {

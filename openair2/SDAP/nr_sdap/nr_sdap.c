@@ -21,66 +21,74 @@
 
 #include "nr_sdap.h"
 
-boolean_t sdap_data_req(protocol_ctxt_t *ctxt_p,
-                        const srb_flag_t srb_flag,
-                        const rb_id_t rb_id,
-                        const mui_t mui,
-                        const confirm_t confirm,
-                        const sdu_size_t sdu_buffer_size,
-                        unsigned char *const sdu_buffer,
-                        const pdcp_transmission_mode_t pt_mode,
-                        const uint32_t *sourceL2Id,
-                        const uint32_t *destinationL2Id,
-                        const uint8_t qfi,
-                        const boolean_t rqi,
-                        const int pdusession_id) {
+uint8_t nas_qfi;
+uint8_t nas_pduid;
+
+bool sdap_data_req(protocol_ctxt_t *ctxt_p,
+                   const ue_id_t ue_id,
+                   const srb_flag_t srb_flag,
+                   const rb_id_t rb_id,
+                   const mui_t mui,
+                   const confirm_t confirm,
+                   const sdu_size_t sdu_buffer_size,
+                   unsigned char *const sdu_buffer,
+                   const pdcp_transmission_mode_t pt_mode,
+                   const uint32_t *sourceL2Id,
+                   const uint32_t *destinationL2Id,
+                   const uint8_t qfi,
+                   const bool rqi,
+                   const int pdusession_id) {
   nr_sdap_entity_t *sdap_entity;
-  sdap_entity = nr_sdap_get_entity(ctxt_p->rnti, pdusession_id);
+  sdap_entity = nr_sdap_get_entity(ue_id, pdusession_id);
 
   if(sdap_entity == NULL) {
-    LOG_E(SDAP, "%s:%d:%s: Entity not found with ue rnti: %x and pdusession id: %d\n", __FILE__, __LINE__, __FUNCTION__, ctxt_p->rnti, pdusession_id);
+    LOG_E(SDAP, "%s:%d:%s: Entity not found with ue: 0x%"PRIx64" and pdusession id: %d\n", __FILE__, __LINE__, __FUNCTION__, ue_id, pdusession_id);
     return 0;
   }
 
-  boolean_t ret = sdap_entity->tx_entity(sdap_entity,
-                                         ctxt_p,
-                                         srb_flag,
-                                         rb_id,
-                                         mui,
-                                         confirm,
-                                         sdu_buffer_size,
-                                         sdu_buffer,
-                                         pt_mode,
-                                         sourceL2Id,
-                                         destinationL2Id,
-                                         qfi,
-                                         rqi);
+  bool ret = sdap_entity->tx_entity(sdap_entity,
+                                    ctxt_p,
+                                    srb_flag,
+                                    rb_id,
+                                    mui,
+                                    confirm,
+                                    sdu_buffer_size,
+                                    sdu_buffer,
+                                    pt_mode,
+                                    sourceL2Id,
+                                    destinationL2Id,
+                                    qfi,
+                                    rqi);
   return ret;
 }
 
 void sdap_data_ind(rb_id_t pdcp_entity,
                    int is_gnb,
-                   int has_sdap,
-                   int has_sdapULheader,
+                   bool has_sdap_rx,
                    int pdusession_id,
-                   int rnti,
+                   ue_id_t ue_id,
                    char *buf,
                    int size) {
   nr_sdap_entity_t *sdap_entity;
-  sdap_entity = nr_sdap_get_entity(rnti, pdusession_id);
+  sdap_entity = nr_sdap_get_entity(ue_id, pdusession_id);
 
-  if(sdap_entity == NULL) {
-    LOG_E(SDAP, "%s:%d:%s: Entity not found\n", __FILE__, __LINE__, __FUNCTION__);
+  if (sdap_entity == NULL) {
+    LOG_E(SDAP, "%s:%d:%s: Entity not found for ue rnti/ue_id: %lx and pdusession id: %d\n", __FILE__, __LINE__, __FUNCTION__, ue_id, pdusession_id);
     return;
   }
 
   sdap_entity->rx_entity(sdap_entity,
                          pdcp_entity,
                          is_gnb,
-                         has_sdap,
-                         has_sdapULheader,
+                         has_sdap_rx,
                          pdusession_id,
-                         rnti,
+                         ue_id,
                          buf,
                          size);
+}
+
+void set_qfi_pduid(uint8_t qfi, uint8_t pduid){
+  nas_qfi = qfi;
+  nas_pduid = pduid;
+  return;
 }

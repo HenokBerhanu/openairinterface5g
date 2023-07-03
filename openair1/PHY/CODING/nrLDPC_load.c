@@ -49,25 +49,72 @@ static loader_shlibfunc_t shlib_fdesc[3];
 char *arg[64]={"ldpctest",NULL};
 
 int load_nrLDPClib(char *version) {
-	 char *ptr = (char*)config_get_if();
-	 char libname[64]="ldpc";
+  char *ptr = (char *)config_get_if();
+  char libname[64] = "ldpc";
 
-     if ( ptr==NULL )  {// phy simulators, config module possibly not loaded
-     	 load_configmodule(1,arg,CONFIG_ENABLECMDLINEONLY) ;
-     	 logInit();
-     }	 
-     shlib_fdesc[0].fname = "nrLDPC_decod";
-     shlib_fdesc[1].fname = "nrLDPC_encod";
-     shlib_fdesc[2].fname = "nrLDPC_initcall";
-     int ret;
-     if (version)
-       ret=load_module_version_shlib(libname,version,shlib_fdesc,sizeof(shlib_fdesc)/sizeof(loader_shlibfunc_t),NULL);
-     else
-       ret=load_module_shlib(libname,shlib_fdesc,sizeof(shlib_fdesc)/sizeof(loader_shlibfunc_t),NULL);
-     AssertFatal( (ret >= 0),"Error loading ldpc decoder");
-     nrLDPC_decoder = (nrLDPC_decoderfunc_t)shlib_fdesc[0].fptr;
-     nrLDPC_encoder = (nrLDPC_encoderfunc_t)shlib_fdesc[1].fptr;
-     nrLDPC_initcall = (nrLDPC_initcallfunc_t)shlib_fdesc[2].fptr;
+  if (ptr == NULL) { // phy simulators, config module possibly not loaded
+    load_configmodule(1, arg, CONFIG_ENABLECMDLINEONLY);
+    logInit();
+  }
+  shlib_fdesc[0].fname = "nrLDPC_decod";
+  shlib_fdesc[1].fname = "nrLDPC_encod";
+  shlib_fdesc[2].fname = "nrLDPC_initcall";
+  int ret;
+  ret = load_module_version_shlib(libname, version, shlib_fdesc, sizeofArray(shlib_fdesc), NULL);
+  AssertFatal((ret >= 0), "Error loading ldpc decoder");
+  nrLDPC_decoder = (nrLDPC_decoderfunc_t)shlib_fdesc[0].fptr;
+  nrLDPC_encoder = (nrLDPC_encoderfunc_t)shlib_fdesc[1].fptr;
+  nrLDPC_initcall = (nrLDPC_initcallfunc_t)shlib_fdesc[2].fptr;
+  return 0;
+}
+
+int load_nrLDPClib_offload(void) {
+     loader_shlibfunc_t shlib_decoffload_fdesc; 
+     
+     shlib_decoffload_fdesc.fname = "nrLDPC_decod_offload";
+     int ret=load_module_shlib("ldpc_t1",&shlib_decoffload_fdesc,1,NULL);
+     AssertFatal( (ret >= 0),"Error loading ldpc decoder offload");
+     nrLDPC_decoder_offload = (nrLDPC_decoffloadfunc_t)shlib_decoffload_fdesc.fptr;
+
+  t_nrLDPC_dec_params decParams;
+  t_nrLDPC_dec_params* p_decParams    = &decParams;
+  int8_t   l[68*384];
+  int8_t llrProcBuf[22*384];
+
+  p_decParams->Z = 384;
+  p_decParams->BG = 1;
+
+  AssertFatal(nrLDPC_decoder_offload(p_decParams,0, 0,
+				     1,
+				     0,
+				     0,
+				     25344,
+				     8,
+				     l, 
+				     llrProcBuf, 0)>=0,
+	      "error loading LDPC decoder offload library\n");
+
+
+  return 0;
+}
+
+int free_nrLDPClib_offload(void) {
+t_nrLDPC_dec_params decParams;
+  t_nrLDPC_dec_params* p_decParams    = &decParams;
+  int8_t   l[68*384];
+  int8_t llrProcBuf[22*384];
+
+  p_decParams->Z = 384;
+  p_decParams->BG = 1;
+
+  nrLDPC_decoder_offload(p_decParams,0,0,
+                        1,
+                        0,
+                        0,
+                        25344,
+                        8,
+                        l,
+                        llrProcBuf, 2);
 return 0;
 }
 
